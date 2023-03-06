@@ -1,12 +1,11 @@
 use bitflags::bitflags;
+#[cfg(feature = "defmt")]
+use defmt::trace;
 use embedded_hal::i2c::I2c;
 
-use super::settings::Settings;
+const SRP_ADDR: u8 = 0x0b;
 
-pub(crate) enum Register8 {
-    SetReset = 0x0b,
-}
-
+#[allow(clippy::upper_case_acronyms)]
 pub(crate) enum Register16 {
     X = 0x00,
     Y = 0x02,
@@ -20,7 +19,7 @@ macro_rules! flag_getter {
             #[cfg(feature = "defmt")]
             trace!("Reading flags from {}", FlagRegister::$reg);
             Ok(<$reg>::from_bits_truncate(
-                self.read_flags(FlagRegister::$reg)?,
+                self.read_raw(FlagRegister::$reg as u8)?,
             ))
         }
     };
@@ -30,7 +29,7 @@ macro_rules! flag_setter {
         fn $funcname(&mut self, val: $reg) -> Result<(), I::Error> {
             #[cfg(feature = "defmt")]
             trace!("Writing flags to {}", FlagRegister::$reg);
-            self.write_flags(FlagRegister::$reg, val.bits())
+            self.write_raw(FlagRegister::$reg as u8, val.bits())
         }
     };
 }
@@ -97,29 +96,23 @@ pub(crate) trait Registers<I: I2c> {
         self.i2c().write(Self::ADDR, &to_write)
     }
 
-    fn read_flags(&mut self, reg: FlagRegister) -> Result<u8, I::Error> {
-        self.read_raw(reg as u8)
-    }
-
-    fn write_flags(&mut self, reg: FlagRegister, val: u8) -> Result<(), I::Error> {
-        self.write_raw(reg as u8, val)
-    }
-
-    fn read_reg8(&mut self, reg: Register8) -> Result<i8, I::Error> {
-        let raw = self.read_raw(reg as u8)?;
+    fn read_set_reset_period(&mut self) -> Result<u8, I::Error> {
+        let raw = self.read_raw(SRP_ADDR)?;
         Ok(bytemuck::cast(raw))
     }
 
     // Uses pointer rollover to reduce bus load
-    fn read_reg16s(&mut self, reg: Register16) -> Result<i16, I::Error> {
+    fn read_reg16(&mut self, reg: Register16) -> Result<i16, I::Error> {
         let lsb_addr = reg as u8;
         let mut buf = [0; 2];
 
         self.i2c().write_read(Self::ADDR, &[lsb_addr], &mut buf)?;
+        #[cfg(feature = "defmt")]
+        trace!("Read value {:?} from register at {}", buf, lsb_addr);
         Ok(i16_from_le(&buf))
     }
 
-    /// Read all 3 axes' data off the device.
+    /// Read all 6 data registers off the device.
     ///
     /// Uses pointer rollover to reduce bus load.
     fn read_data(&mut self) -> Result<(i16, i16, i16), I::Error> {
@@ -127,6 +120,8 @@ pub(crate) trait Registers<I: I2c> {
         let mut buf = [0; 6];
 
         self.i2c().write_read(Self::ADDR, &[addr], &mut buf)?;
+        #[cfg(feature = "defmt")]
+        trace!("Read raw value {:?} from all axis registers", buf);
 
         Ok((
             i16_from_le(&buf[0..2]),
@@ -135,34 +130,17 @@ pub(crate) trait Registers<I: I2c> {
         ))
     }
 
-    fn write_reg8(&mut self, reg: Register8, val: i8) -> Result<(), I::Error> {
-        self.write_raw(reg as u8, bytemuck::cast(val))
+    fn write_set_reset_period(&mut self, val: u8) -> Result<(), I::Error> {
+        self.write_raw(SRP_ADDR, bytemuck::cast(val))
     }
 
     flag_getter! { get_control2 -> Control2 }
     flag_getter! { get_status -> Status }
-
-    fn get_settings(&mut self) -> Result<Settings, I::Error> {
-        let val = self.read_raw(Settings::ADDR)?;
-        Ok(Settings::from(val))
-    }
-
     flag_setter! { set_control2 -> Control2 }
-
-    fn set_settings(&mut self, set: Settings) -> Result<(), I::Error> {
-        self.write_raw(Settings::ADDR, set.into())
-    }
-
-    fn set_standby(&mut self) -> Result<(), I::Error> {
-        let mut set_val: u8 = self.get_settings()?.into();
-        // unset the continuous measurement bit
-        set_val &= 0b1111_1100;
-        self.write_raw(Settings::ADDR, set_val)
-    }
 }
 
 impl<I: I2c> Registers<I> for crate::QMC8553L<I> {
-    const ADDR: u8 = Self::ADDR;
+    const ADDR: u8 = 0x0D;
 
     fn i2c(&mut self) -> &mut I {
         // We set it off standby since we assume the I2C will be used
