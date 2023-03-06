@@ -21,6 +21,8 @@ use settings::Settings;
 
 /// Settings for the device.
 pub mod settings {
+    #[cfg(feature = "defmt")]
+    use defmt::Format;
     use enumn::N;
 
     // TODO: review defaults
@@ -29,6 +31,7 @@ pub mod settings {
     ///
     /// Controls the frequency at which reads can be made.
     #[derive(Copy, Clone, Debug, PartialEq, Eq, Default, N)]
+    #[cfg_attr(feature = "defmt", derive(Format))]
     pub enum OutputDataRate {
         /// 10Hz
         #[default]
@@ -43,6 +46,7 @@ pub mod settings {
 
     /// The Oversample Ratio of the device.
     #[derive(Copy, Clone, Debug, PartialEq, Eq, Default, N)]
+    #[cfg_attr(feature = "defmt", derive(Format))]
     #[allow(missing_docs)]
     pub enum OverSampleRatio {
         OSR512 = 0b00,
@@ -53,6 +57,7 @@ pub mod settings {
     }
 
     #[derive(Copy, Clone, Debug, PartialEq, Eq, Default, N)]
+    #[cfg_attr(feature = "defmt", derive(Format))]
     pub enum FullScale {
         #[default]
         RNG2G = 0b00,
@@ -61,6 +66,7 @@ pub mod settings {
 
     #[allow(missing_docs)]
     #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+    #[cfg_attr(feature = "defmt", derive(Format))]
     pub struct Settings {
         pub odr: OutputDataRate,
         pub osr: OverSampleRatio,
@@ -90,6 +96,20 @@ pub mod settings {
                 rng: FullScale::n((val & 0b0011_0000) >> 4).unwrap(),
                 osr: OverSampleRatio::n((val & 0b0000_1100) >> 2).unwrap(),
             }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn sanity() {
+            let set = Settings::default();
+
+            let intermediate_val: u8 = set.into();
+
+            assert_eq!(<u8 as Into<Settings>>::into(intermediate_val), set);
         }
     }
 }
